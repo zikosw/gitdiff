@@ -1,0 +1,7 @@
+{:source-paths ["src"]
+ :dependencies []
+ :nrepl {:port 9000}
+ :builds {:server {:target :node-script
+                   :output-to "main.js"
+                   :main server.core/main!
+                   :devtools {:after-load server.core/reload!}}}}

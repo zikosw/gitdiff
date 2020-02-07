@@ -1,0 +1,5 @@
+/*.iml
+/main.js
+/.idea/
+node_modules/
+.shadow-cljs/

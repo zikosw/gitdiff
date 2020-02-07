@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "nodegit": "^0.26.4",
+    "ws": "^7.2.1"
+  },
+  "scripts": {
+    "watch": "shadow-cljs watch server",
+    "start": "node main.js"
+  },
+  "devDependencies": {
+    "source-map-support": "^0.5.16"
+  }
+}
