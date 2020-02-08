@@ -1,6 +1,8 @@
 (ns server.core
   (:require ["nodegit" :as nodegit]
             ["fs" :as fs]
+            [oops.core :refer [oget oset! ocall oapply ocall! oapply!
+                               oget+ oset!+ ocall+ oapply+ ocall!+ oapply!+]]
             [promesa.core :as p]
             [promesa.exec :as pe]
             [reagent.dom.server :as dom]
@@ -18,130 +20,141 @@
 
 (defn get-commit [])
 
+
+(defn get-obj-props [obj props]
+  (into {} (map (fn [prop]
+                  [prop (js->clj (ocall+ obj (name prop)))])
+                props)))
+
+(def patch-props
+  [:isAdded :isConflicted :isDeleted :isModified :isRenamed :isUnmodified :isUntracked
+   :lineStats :size])
+
+(def line-props [:content :origin :newLineno :oldLineno :numLines])
+
+
+(def hunk-props [:header :oldStart :oldLines :newStart :newLines])
+
+(defn get-line [line]
+  (get-obj-props line line-props))
+
+(defn get-hunk [h]
+  (get-obj-props h hunk-props))
+
+(defn get-patch [p]
+  (merge (get-obj-props p patch-props)
+         {:newFile (.. p newFile path)
+          :oldFile (.. p oldFile path)}))
+
 (defn get-lines [hunk]
   (p/let [lines (.lines hunk)]
-    {:self hunk
-     :lines lines}))
+    {:hunk  (get-hunk hunk)
+     :lines (map get-line (array-seq lines))}))
 
 (defn get-hunks [patch]
-  (println :gh patch (type patch))
-  (p/let [hunks (.hunks patch)]
-          ;with-lines (map get-lines (array-seq hunks))]
-     {:self  patch
-      :hunks hunks})) ;with-lines}))
+  (p/let [hunks      (.hunks patch)
+          with-lines (p/all (map get-lines (array-seq hunks)))]
+     {:patch (get-patch patch)
+      :hunks with-lines}))
 
 (defn get-patches [diff]
-  (println :gp diff)
-  (p/let [patches (.patches diff)]
-    {:self diff
-     :patches patches}))
+  (p/let [patches     (.patches diff)
+          with-hunks  (p/all (map get-hunks patches))]
+    {:diff diff
+     :patches with-hunks}))
+
+(defn get-diffs [commit]
+  (p/let [diffs         (.getDiff commit)
+          with-patches  (p/all (map get-patches diffs))]
+    {:self  commit
+     :diffs with-patches}))
+
 
 ;; diff
 ;; - [patch]
 ;; --- [hunk]
 ;; ------ [line]
 
+
+;var opts = { flags: git.Diff.FIND.RENAMES}
+;return diff.findSimilar(opts);
+
+(defn get-staged-diff [repo]
+  (p/let [head-commit (.getHeadCommit repo)
+          head-tree   (.getTree head-commit)
+          diff        (.treeToIndex (.-Diff nodegit) repo head-tree nil)
+          with-similar (.findSimilar diff (clj->js {:flags (oget nodegit "Diff.FIND.RENAMES")}))
+          patches      (get-patches diff)]
+
+    (println :staged-diff patches)
+    patches))
+
+(defn get-unstaged-diff [repo]
+  "This almost matches the 'git diff' command except it includes untracked"
+  (p/let [head-commit (.getHeadCommit repo)
+          head-tree (.getTree head-commit)
+          diff      (.indexToWorkdir (.-Diff nodegit) repo nil
+                                     (clj->js {:flags (bit-or
+                                                        (oget nodegit "Diff.OPTION.SHOW_UNTRACKED_CONTENT")
+                                                        (oget nodegit "Diff.OPTION.RECURSE_UNTRACKED_DIRS"))}))
+          patches   (get-patches diff)]
+    (println :unstaged-diff patches)
+    patches))
+
+
+(defn get-commit-diff [repo commit-hash]
+  (p/let [commit  (.getCommit repo commit-hash)
+          diffs (get-diffs commit)]
+    (println :diffs diffs)
+    diffs))
+
+(defn open-repo [path]
+  (.open (.-Repository nodegit) path))
+
 (comment
+  (let [rp-path "../../satang/tdax-user-management-ui"]
+    (p/let [rp        (open-repo rp-path)]
+       (get-staged-diff rp)))
+
+  (let [rp-path "../../satang/tdax-user-management-ui"
+        commit-hash "d57e0af85faba6d8feb6e99e5fd82441661b59e7"]
+    (p/let [rp        (.open (.-Repository nodegit) rp-path)]
+       (get-commit-diff rp commit-hash)))
+
+  ;;   const diff = await Diff.treeToIndex(repo, await head.getTree(), null);
   (let [rp-path "../../satang/tdax-user-management-ui"
         commit-hash "d57e0af85faba6d8feb6e99e5fd82441661b59e7"]
     (p/let [rp        (.open (.-Repository nodegit) rp-path)
-            cm        (.getCommit rp commit-hash)
-            diff-list (.getDiff cm)
-            patches   (map get-patches (array-seq diff-list))]
-            ;patches   (p/all (map #(.patches %) (array-seq diff-list)))]
-            ;hunks     (p/all (map get-hunks (array-seq (first patches))))]
-            ;hunks     (p/all (map #(.hunks %)   (array-seq (first patches))))
-            ;lines     (p/all (map #(.lines %)   (array-seq (first hunks))))]
+            ;cm        (.getCommit rp commit-hash)
+            cm         (.getHeadCommit rp)
+            ;diffs     (get-diffs cm)
+            head-cm-tree  (.getTree cm)
+            ;workDirDiffs (.treeToIndex (.-Diff nodegit) rp head-cm-tree nil)
+            workDirDiffs (.treeToWorkdir (.-Diff nodegit) rp head-cm-tree nil)
+            wdPatches  (get-patches workDirDiffs)]
 
       (println :wd (.workdir rp))
       (println :cm (.message cm))
-      (println :diff-list diff-list (type diff-list) :cnt (count (array-seq diff-list)))
-      (println :patches patches)
-      ;(println :patchs (count (array-seq (first patches))))
-      ;(println :hunks (count hunks))
-      ;(doseq [p (array-seq (first patches))]
-      ;  (println :P (.lineStats p)))
-      ;(println :hunks hunks (count hunks))
-      ;(println :lines lines (count lines))
+      ;(println :diffs diffs (type diffs) :cnt (count diffs))
+
+      (println :workdir-diff workDirDiffs)
+      (println :wd-diff (type workDirDiffs))
+      (println :wd-patches wdPatches)
+
+      ;(def cm-diffs diffs)
+
       #_(p/let [cm (.getCommit rp)]
            (println :wdir (.workdir rp))
            (println :cm (.message cm))))))
 
 
-(defn job [path]
-  (-> (.open (.-Repository nodegit) path)
-      ;(.then #(.getHeadCommit %))
-      (.then #(.getCommit % "d57e0af85faba6d8feb6e99e5fd82441661b59e7"))
-      (.then (fn [cm]
-               (let [sha (.sha cm)
-                     author (.. cm author name)
-                     message (.message cm)]
-                 (println :commit sha :by author :msg message)
-                 cm)))
-      (.then #(.getDiff %))
-      (.then (fn [difflist]
-               (.forEach
-                 difflist
-                 (fn [diff]
-                   (println :diff diff :nd (.numDeltas diff))
-                   (->
-                     (.patches diff)
-                     (.then (fn [patches]
-                              (.forEach
-                                patches
-                                (fn [patch]
-                                  (println :patch patch :t (type patch)  :ls (.lineStats patch))
-                                  (->
-                                    (.hunks patch)
-                                    (.then (fn [hunks]
-                                             (.forEach hunks
-                                                       (fn [hunk]
-                                                        (do
-                                                          (println :h hunk (type hunk) (.lines hunk))
-                                                          (->
-                                                            (.lines hunk)
-                                                            (.then (fn [lines]
-                                                                     (println :diff
-                                                                              (.. patch oldFile path)
-                                                                              (.. patch newFile path))
-                                                                     (println :hh (.. hunk header trim) :hhh)
-                                                                     (.forEach lines
-                                                                               (fn [line]
-                                                                                 #(println :l line)
-                                                                                 (println :ll
-                                                                                          (.oldLineno line)
-                                                                                          (.newLineno line)
-                                                                                          (char (.origin line))
-                                                                                          (.. line content))))))))))))))))))))
-               (println :done :difflist)))))
-
-
 (defn reload! []
   (println "\nCode updated.")
-  (job "../../satang/tdax-user-management-ui"))
+  (println "../../satang/tdax-user-management-ui"))
   ;   (println "resolve" (.then (js/Promise.resolve 10) #(println :resolve %)))
   ;   (println "repo" repo)
   ;   (println :nodegit nodegit)
   ;   (println :repo (js/Object.keys (.-Repository nodegit)))
-
-(defn run []
-  (-> (.open (.-Repository nodegit) "../../satang/tdax-user-management-ui")
-      (.then (fn [rp]
-               (js/console.log "then-rp" (.workdir rp)))))
-
-  (println :workdir js/__dirname)
-
-  (println "commit---"
-           (-> (.open (.-Repository nodegit) "../../satang/tdax-user-management-ui")
-               (.then (fn [rp]
-                        (js/console.log "then-rp" rp
-                          (.getCommit rp "74a24cb5dee2842be5cf9d70e2a59dfb0242b93c"))))
-               (.then #(println :c (.message %)))))
-
-  (println "Trying values:" value-a value-b))
-
-
-
 
 
 (defn main! []
