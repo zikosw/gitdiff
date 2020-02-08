@@ -1,6 +1,7 @@
 {:source-paths ["src"]
- :dependencies []
- :nrepl {:port 9000}
+ :dependencies [[reagent "0.9.1"]
+                [funcool/promesa "5.1.0"]]
+ :nrepl {:port 9900}
  :builds {:server {:target :node-script
                    :output-to "main.js"
                    :main server.core/main!

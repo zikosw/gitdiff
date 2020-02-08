@@ -1,5 +1,10 @@
 (ns server.core
-  (:require ["nodegit" :as nodegit]))
+  (:require ["nodegit" :as nodegit]
+            ["fs" :as fs]
+            [promesa.core :as p]
+            [promesa.exec :as pe]
+            [reagent.dom.server :as dom]
+            [reagent.core :as r :refer [atom]]))
 
 (def value-a 1)
 
@@ -13,6 +18,55 @@
 
 (defn get-commit [])
 
+(defn get-lines [hunk]
+  (p/let [lines (.lines hunk)]
+    {:self hunk
+     :lines lines}))
+
+(defn get-hunks [patch]
+  (println :gh patch (type patch))
+  (p/let [hunks (.hunks patch)]
+          ;with-lines (map get-lines (array-seq hunks))]
+     {:self  patch
+      :hunks hunks})) ;with-lines}))
+
+(defn get-patches [diff]
+  (println :gp diff)
+  (p/let [patches (.patches diff)]
+    {:self diff
+     :patches patches}))
+
+;; diff
+;; - [patch]
+;; --- [hunk]
+;; ------ [line]
+
+(comment
+  (let [rp-path "../../satang/tdax-user-management-ui"
+        commit-hash "d57e0af85faba6d8feb6e99e5fd82441661b59e7"]
+    (p/let [rp        (.open (.-Repository nodegit) rp-path)
+            cm        (.getCommit rp commit-hash)
+            diff-list (.getDiff cm)
+            patches   (map get-patches (array-seq diff-list))]
+            ;patches   (p/all (map #(.patches %) (array-seq diff-list)))]
+            ;hunks     (p/all (map get-hunks (array-seq (first patches))))]
+            ;hunks     (p/all (map #(.hunks %)   (array-seq (first patches))))
+            ;lines     (p/all (map #(.lines %)   (array-seq (first hunks))))]
+
+      (println :wd (.workdir rp))
+      (println :cm (.message cm))
+      (println :diff-list diff-list (type diff-list) :cnt (count (array-seq diff-list)))
+      (println :patches patches)
+      ;(println :patchs (count (array-seq (first patches))))
+      ;(println :hunks (count hunks))
+      ;(doseq [p (array-seq (first patches))]
+      ;  (println :P (.lineStats p)))
+      ;(println :hunks hunks (count hunks))
+      ;(println :lines lines (count lines))
+      #_(p/let [cm (.getCommit rp)]
+           (println :wdir (.workdir rp))
+           (println :cm (.message cm))))))
+
 
 (defn job [path]
   (-> (.open (.-Repository nodegit) path)
@@ -25,7 +79,7 @@
                  (println :commit sha :by author :msg message)
                  cm)))
       (.then #(.getDiff %))
-      (.done (fn [difflist]
+      (.then (fn [difflist]
                (.forEach
                  difflist
                  (fn [diff]
@@ -37,8 +91,6 @@
                                 patches
                                 (fn [patch]
                                   (println :patch patch :t (type patch)  :ls (.lineStats patch))
-                                  (println :pp (js/Object.getOwnPropertyNames patch))
-                                  (println :pp (js/Object.hasOwnProperty patch "lineStats"))
                                   (->
                                     (.hunks patch)
                                     (.then (fn [hunks]
@@ -96,5 +148,12 @@
   (println "App loaded!")
   (reload!))
 
+
+(defn hi [name]
+  (prn :hi name))
+
 (comment
+  (job "../../satang/tdax-user-management-ui")
+  (fs/writeFile "index.html" (dom/render-to-string [:p "hello"]) #(println :done %))
   (println :hello))
+
